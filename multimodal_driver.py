@@ -38,7 +38,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str,
                     choices=["mosi", "mosei"], default="mosi")
 parser.add_argument("--max_seq_length", type=int, default=50)
-parser.add_argument("--train_batch_size", type=int, default=48)
+parser.add_argument("--train_batch_size", type=int, default=32)
 parser.add_argument("--dev_batch_size", type=int, default=128)
 parser.add_argument("--test_batch_size", type=int, default=128)
 parser.add_argument("--n_epochs", type=int, default=40)
@@ -53,7 +53,7 @@ parser.add_argument(
 parser.add_argument("--learning_rate", type=float, default=1e-5)
 parser.add_argument("--gradient_accumulation_step", type=int, default=1)
 parser.add_argument("--warmup_proportion", type=float, default=0.1)
-parser.add_argument("--seed", type=seed, default=42)  # 8868  # random
+parser.add_argument("--seed", type=int, default=8868)  # 8868  # random
 parser.add_argument('--wandb', action='store_true',  #
                     help='whether enable wandb to log the result.')
 
@@ -233,7 +233,8 @@ def get_appropriate_dataset(data):
         [f.input_mask for f in features], dtype=torch.long)
     all_segment_ids = torch.tensor(
         [f.segment_ids for f in features], dtype=torch.long)
-    all_visual = torch.tensor([f.visual for f in features], dtype=torch.float)
+    all_visual = torch.tensor(
+        [f.visual for f in features], dtype=torch.float)
     all_acoustic = torch.tensor(
         [f.acoustic for f in features], dtype=torch.float)
     all_label_ids = torch.tensor(
@@ -364,7 +365,7 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
         input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
         visual = torch.squeeze(visual, 1)
         acoustic = torch.squeeze(acoustic, 1)
-        outputs = model(
+        outputs, x_tri_mods = model(
             input_ids,
             visual,
             acoustic,
@@ -372,16 +373,33 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
             attention_mask=input_mask,
             labels=None,
         )
+
+        # print(x_tri_mods[0].shape)
+        # print(x_tri_mods[1].shape)
+        # print(x_tri_mods[2].shape)
+        # input()
+        x_t, x_v, x_a = x_tri_mods[0], x_tri_mods[1], x_tri_mods[2]
+        uni_fuse = model.bert.MAG
+        preds_t = (torch.mm(x_t, torch.transpose(uni_fuse.output_concat.weight[:, :40], 0, 1)) +
+                   uni_fuse.output_concat.bias / 3)
+        preds_v = (torch.mm(x_v, torch.transpose(uni_fuse.output_concat.weight[:, 40:80], 0, 1)) +
+                   uni_fuse.output_concat.bias / 3)
+        preds_a = (torch.mm(x_a, torch.transpose(uni_fuse.output_concat.weight[:, 80:], 0, 1)) +
+                   uni_fuse.output_concat.bias / 3)
+
+        # print(preds_t)
+        # input(f'preds_t')
+
         logits = outputs[0]
         loss_fct = MSELoss()
         loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
         _x = 1
-        if _x == 0:
+        if _x == 1:
             # TODO: estimate uni-model results
-            loss_t = ...
-            loss_v = ...
-            loss_a = ...
+            loss_t = loss_fct(preds_t.view(-1), label_ids.view(-1))
+            loss_v = loss_fct(preds_v.view(-1), label_ids.view(-1))
+            loss_a = loss_fct(preds_a.view(-1), label_ids.view(-1))
 
             # -----------------------------------------
             # TODO: pa_gate_loss
@@ -395,7 +413,9 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
 
         if _x == 0:
             loss += pa_loss  # 添加 pa_loss.
-        loss.backward()
+            # print(pa_prob, pa_loss)
+        loss.backward(retain_graph=True)
+        pa_loss.backward()
 
         tr_loss += loss.item()
         nb_tr_steps += 1
@@ -419,7 +439,7 @@ def eval_epoch(model: nn.Module, dev_dataloader: DataLoader, optimizer):
             input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
             visual = torch.squeeze(visual, 1)
             acoustic = torch.squeeze(acoustic, 1)
-            outputs = model(
+            outputs, _ = model(
                 input_ids,
                 visual,
                 acoustic,
@@ -453,7 +473,7 @@ def test_epoch(model: nn.Module, test_dataloader: DataLoader):
             input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
             visual = torch.squeeze(visual, 1)
             acoustic = torch.squeeze(acoustic, 1)
-            outputs = model(
+            outputs, _ = model(
                 input_ids,
                 visual,
                 acoustic,

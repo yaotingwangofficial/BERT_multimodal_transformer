@@ -33,6 +33,10 @@ class MAG(nn.Module):
         self.proj_t = nn.Conv1d(self.dim_t, self.dim_tmp, kernel_size=self.kernels[1], padding=0, bias=False)
         self.proj_v = nn.Conv1d(self.dim_v, self.dim_tmp, kernel_size=self.kernels[1], padding=0, bias=False)
         self.proj_a = nn.Conv1d(self.dim_a, self.dim_tmp, kernel_size=self.kernels[2], padding=0, bias=False)
+        self.dim_out = 1
+        self.output_concat = nn.Linear(self.dim_tmp*3, self.dim_out)
+
+        # self.proj_t_2 = nn.Linear(self.dim_t, self.dim_tmp)
 
         """ 2. GRU """
         num_layers = 3  # TODO: GRU layers?
@@ -89,6 +93,9 @@ class MAG(nn.Module):
         visual = self.proj_v(visual.transpose(1, 2)).permute(2, 0, 1)
         acoustic = self.proj_a(acoustic.transpose(1, 2)).permute(2, 0, 1)
 
+        # 取出最后一层, 用于预测uni-modal的结果.
+        # input(f'visual: {visual.shape}')  # [50, 48, 40]
+
         # 2. GRU
         # text_embedding, f_t = self.gru_l(text_embedding)
         # acoustic, f_a = self.gru_a(acoustic)
@@ -126,8 +133,8 @@ class MAG(nn.Module):
         # print(visual.shape, text_embedding_tmp.shape, text_embedding.shape)
         # input('---')
 
-        weight_v = F.relu(self.W_hv(torch.cat((visual, text_embedding), dim=-1)))
-        weight_a = F.relu(self.W_ha(torch.cat((acoustic, text_embedding), dim=-1)))
+        weight_v = F.leaky_relu(self.W_hv(torch.cat((visual, text_embedding), dim=-1)))
+        weight_a = F.leaky_relu(self.W_ha(torch.cat((acoustic, text_embedding), dim=-1)))
 
         h_m = weight_v * self.W_v(visual) + weight_a * self.W_a(acoustic)  # [50, 48, 768]
         # input(f'h_m: {h_m.shape}, {text_embedding.shape}')
@@ -146,6 +153,7 @@ class MAG(nn.Module):
         alpha = alpha.unsqueeze(dim=-1)
 
         acoustic_vis_embedding = alpha * h_m
+        # input(f'alpha.shape: {alpha.shape}')  # [50, 32, 1]
 
         embedding_output = self.dropout(
             self.LayerNorm(acoustic_vis_embedding + text_embedding)
@@ -153,4 +161,8 @@ class MAG(nn.Module):
 
         # input(f'embd_shape: {embedding_output.shape}')  # input(f'embd: {embedding_output.shape}')  # OG: [48, 50, 768]
 
-        return embedding_output.transpose(0, 1)
+        x_t = text_embedding_tmp[-1]
+        x_v = visual[-1]
+        x_a = acoustic[-1]
+        return embedding_output.transpose(0, 1), [x_t, x_v, x_a]
+

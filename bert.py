@@ -216,7 +216,7 @@ class MAG_BertModel(BertPreTrainedModel):
         )
 
         # Early fusion with MAG
-        fused_embedding = self.MAG(embedding_output, visual, acoustic)
+        fused_embedding, x_tri_mods = self.MAG(embedding_output, visual, acoustic)
 
         encoder_outputs = self.encoder(
             fused_embedding,
@@ -234,7 +234,7 @@ class MAG_BertModel(BertPreTrainedModel):
             1:
         ]  # add hidden_states and attentions if they are here
         # sequence_output, pooled_output, (hidden_states), (attentions)
-        return outputs
+        return outputs, x_tri_mods
 
 
 class MAG_BertForSequenceClassification(BertPreTrainedModel):
@@ -288,7 +288,7 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
             heads.
         """
 
-        outputs = self.bert(
+        outputs, _tri_mods = self.bert(
             input_ids,
             visual,
             acoustic,
@@ -300,6 +300,9 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
         )
+
+        # print(len(outputs))
+        # input(f'len: {len(_tri_mods)}')  # 3
 
         pooled_output = outputs[1]
 
@@ -321,4 +324,4 @@ class MAG_BertForSequenceClassification(BertPreTrainedModel):
                     logits.view(-1, self.num_labels), labels.view(-1))
             outputs = (loss,) + outputs
 
-        return outputs
+        return outputs, _tri_mods
