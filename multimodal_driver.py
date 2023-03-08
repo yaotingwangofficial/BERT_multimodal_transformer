@@ -52,6 +52,8 @@ parser.add_argument("--learning_rate", type=float, default=1e-5)
 parser.add_argument("--gradient_accumulation_step", type=int, default=1)
 parser.add_argument("--warmup_proportion", type=float, default=0.1)
 parser.add_argument("--seed", type=seed, default="random")
+parser.add_argument('--wandb', action='store_true',  #
+                    help='whether enable wandb to log the result.')
 
 
 args = parser.parse_args()
@@ -372,6 +374,8 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
         loss_fct = MSELoss()
         loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
+        # TODO: gate loss
+
         if args.gradient_accumulation_step > 1:
             loss = loss / args.gradient_accumulation_step
 
@@ -507,25 +511,27 @@ def train(
         valid_losses.append(valid_loss)
         test_accuracies.append(test_acc)
 
-        wandb.log(
-            (
-                {
-                    "train_loss": train_loss,
-                    "valid_loss": valid_loss,
-                    "test_acc": test_acc,
-                    "test_mae": test_mae,
-                    "test_corr": test_corr,
-                    "test_f_score": test_f_score,
-                    "best_valid_loss": min(valid_losses),
-                    "best_test_acc": max(test_accuracies),
-                }
+        if args.wandb:
+            wandb.log(
+                (
+                    {
+                        "train_loss": train_loss,
+                        "valid_loss": valid_loss,
+                        "test_acc": test_acc,
+                        "test_mae": test_mae,
+                        "test_corr": test_corr,
+                        "test_f_score": test_f_score,
+                        "best_valid_loss": min(valid_losses),
+                        "best_test_acc": max(test_accuracies),
+                    }
+                )
             )
-        )
 
 
 def main():
-    wandb.init(project="MAG")
-    wandb.config.update(args)
+    if args.wandb:
+        wandb.init(project="MAG")
+        wandb.config.update(args)
     set_random_seed(args.seed)
 
     (
