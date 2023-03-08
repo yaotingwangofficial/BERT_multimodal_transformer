@@ -38,7 +38,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str,
                     choices=["mosi", "mosei"], default="mosi")
 parser.add_argument("--max_seq_length", type=int, default=50)
-parser.add_argument("--train_batch_size", type=int, default=64)
+parser.add_argument("--train_batch_size", type=int, default=48)
 parser.add_argument("--dev_batch_size", type=int, default=128)
 parser.add_argument("--test_batch_size", type=int, default=128)
 parser.add_argument("--n_epochs", type=int, default=40)
@@ -53,7 +53,7 @@ parser.add_argument(
 parser.add_argument("--learning_rate", type=float, default=1e-5)
 parser.add_argument("--gradient_accumulation_step", type=int, default=1)
 parser.add_argument("--warmup_proportion", type=float, default=0.1)
-parser.add_argument("--seed", type=seed, default="random")  # 8868
+parser.add_argument("--seed", type=seed, default=42)  # 8868  # random
 parser.add_argument('--wandb', action='store_true',  #
                     help='whether enable wandb to log the result.')
 
@@ -485,14 +485,24 @@ def test_score_model(model: nn.Module, test_dataloader: DataLoader, use_zero=Fal
     non_zeros = np.array(
         [i for i, e in enumerate(y_test) if e != 0 or use_zero])
 
-    preds = preds[non_zeros]
-    y_test = y_test[non_zeros]
+    _method = 'right'  # left | right
+    # MFN 方式: 得到结果, 然后直接判断 [>= 0]的结果.
+    # MulT 方式: 得到结果, 取non-zero, 然后 [>0] .
+    if _method == 'left':
+        mae = np.mean(np.absolute(preds - y_test))
+        corr = np.corrcoef(preds, y_test)[0][1]
 
-    mae = np.mean(np.absolute(preds - y_test))
-    corr = np.corrcoef(preds, y_test)[0][1]
+        preds = preds >= 0  # MulT: >0, 无=0;
+        y_test = y_test >= 0
+    else:
+        preds = preds[non_zeros]
+        y_test = y_test[non_zeros]
 
-    preds = preds >= 0
-    y_test = y_test >= 0
+        mae = np.mean(np.absolute(preds - y_test))
+        corr = np.corrcoef(preds, y_test)[0][1]
+
+        preds = preds > 0  # MulT: >0, 无=0;
+        y_test = y_test > 0
 
     f_score = f1_score(y_test, preds, average="weighted")
     acc = accuracy_score(y_test, preds)
