@@ -10,11 +10,11 @@ import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
 
-from transformers.modeling_bert import BertPreTrainedModel
-from transformers.activations import gelu, gelu_new, swish
-from transformers.configuration_bert import BertConfig
+from transformers.models.bert.modeling_bert import BertPreTrainedModel
+from transformers.activations import gelu, gelu_new
+from transformers.models.bert.configuration_bert import BertConfig
 
-from transformers.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
+from transformers.models.bert.modeling_bert import BertEmbeddings, BertEncoder, BertPooler
 from transformers.modeling_utils import (
     PreTrainedModel,
     apply_chunking_to_forward,
@@ -64,7 +64,7 @@ def mish(x):
 ACT2FN = {
     "gelu": gelu,
     "relu": torch.nn.functional.relu,
-    "swish": swish,
+    # "swish": swish,
     "gelu_new": gelu_new,
     "mish": mish,
 }
