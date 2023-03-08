@@ -38,7 +38,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str,
                     choices=["mosi", "mosei"], default="mosi")
 parser.add_argument("--max_seq_length", type=int, default=50)
-parser.add_argument("--train_batch_size", type=int, default=48)
+parser.add_argument("--train_batch_size", type=int, default=64)
 parser.add_argument("--dev_batch_size", type=int, default=128)
 parser.add_argument("--test_batch_size", type=int, default=128)
 parser.add_argument("--n_epochs", type=int, default=40)
@@ -53,7 +53,7 @@ parser.add_argument(
 parser.add_argument("--learning_rate", type=float, default=1e-5)
 parser.add_argument("--gradient_accumulation_step", type=int, default=1)
 parser.add_argument("--warmup_proportion", type=float, default=0.1)
-parser.add_argument("--seed", type=seed, default="random")
+parser.add_argument("--seed", type=seed, default="random")  # 8868
 parser.add_argument('--wandb', action='store_true',  #
                     help='whether enable wandb to log the result.')
 
@@ -376,11 +376,25 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
         loss_fct = MSELoss()
         loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
-        # TODO: gate loss
+        _x = 1
+        if _x == 0:
+            # TODO: estimate uni-model results
+            loss_t = ...
+            loss_v = ...
+            loss_a = ...
+
+            # -----------------------------------------
+            # TODO: pa_gate_loss
+            pa_gate = model.bert.MAG.pa_gate
+            pa_prob = torch.softmax(pa_gate, dim=-1)
+            pa_loss = pa_prob[0] * loss_t + pa_prob[1] * loss_v + pa_prob[1] * loss_a
+            # -----------------------------------------
 
         if args.gradient_accumulation_step > 1:
             loss = loss / args.gradient_accumulation_step
 
+        if _x == 0:
+            loss += pa_loss  # 添加 pa_loss.
         loss.backward()
 
         tr_loss += loss.item()
@@ -513,12 +527,14 @@ def train(
         valid_losses.append(valid_loss)
         test_accuracies.append(test_acc)
 
+        print(f'best-test: {max(test_accuracies)}; test_mae: {test_mae}; test_corr: {test_corr}')
+
         if args.wandb:
             wandb.log(
                 (
                     {
                         "train_loss": train_loss,
-                        "valid_loss": valid_loss,
+                        # "valid_loss": valid_loss,
                         "test_acc": test_acc,
                         "test_mae": test_mae,
                         "test_corr": test_corr,
