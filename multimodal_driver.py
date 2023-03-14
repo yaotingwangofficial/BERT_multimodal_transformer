@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 import warnings
+
 warnings.filterwarnings('ignore')
 
 import argparse
@@ -38,7 +39,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str,
                     choices=["mosi", "mosei"], default="mosi")
 parser.add_argument("--max_seq_length", type=int, default=50)
-parser.add_argument("--train_batch_size", type=int, default=48)
+parser.add_argument("--train_batch_size", type=int, default=64)
 parser.add_argument("--dev_batch_size", type=int, default=128)
 parser.add_argument("--test_batch_size", type=int, default=128)
 parser.add_argument("--n_epochs", type=int, default=40)
@@ -53,10 +54,9 @@ parser.add_argument(
 parser.add_argument("--learning_rate", type=float, default=1e-5)
 parser.add_argument("--gradient_accumulation_step", type=int, default=1)
 parser.add_argument("--warmup_proportion", type=float, default=0.1)
-parser.add_argument("--seed", type=seed, default="random")
+parser.add_argument("--seed", type=int, default=8868)  # 8868  # random
 parser.add_argument('--wandb', action='store_true',  #
                     help='whether enable wandb to log the result.')
-
 
 args = parser.parse_args()
 
@@ -223,7 +223,6 @@ def get_tokenizer(model):
 
 
 def get_appropriate_dataset(data):
-
     tokenizer = get_tokenizer(args.model)
 
     features = convert_to_features(data, args.max_seq_length, tokenizer)
@@ -233,7 +232,8 @@ def get_appropriate_dataset(data):
         [f.input_mask for f in features], dtype=torch.long)
     all_segment_ids = torch.tensor(
         [f.segment_ids for f in features], dtype=torch.long)
-    all_visual = torch.tensor([f.visual for f in features], dtype=torch.float)
+    all_visual = torch.tensor(
+        [f.visual for f in features], dtype=torch.float)
     all_acoustic = torch.tensor(
         [f.acoustic for f in features], dtype=torch.float)
     all_label_ids = torch.tensor(
@@ -263,11 +263,11 @@ def set_up_data_loader():
     test_dataset = get_appropriate_dataset(test_data)
 
     num_train_optimization_steps = (
-        int(
-            len(train_dataset) / args.train_batch_size /
-            args.gradient_accumulation_step
-        )
-        * args.n_epochs
+            int(
+                len(train_dataset) / args.train_batch_size /
+                args.gradient_accumulation_step
+            )
+            * args.n_epochs
     )
 
     train_dataloader = DataLoader(
@@ -355,6 +355,39 @@ def prep_for_training(num_train_optimization_steps: int):
     return model, optimizer, scheduler
 
 
+def PA_func(_x_tri_mods, _model, _loss_fct, _label_ids):
+    # print(x_tri_mods[0].shape)
+    # print(x_tri_mods[1].shape)
+    # print(x_tri_mods[2].shape)
+    # input()
+    x_t, x_v, x_a = _x_tri_mods[0], _x_tri_mods[1], _x_tri_mods[2]
+    uni_fuse = _model.bert.MAG
+    preds_t = (torch.mm(x_t, torch.transpose(uni_fuse.output_concat.weight[:, :40], 0, 1)) +
+               uni_fuse.output_concat.bias / 3)
+    preds_v = (torch.mm(x_v, torch.transpose(uni_fuse.output_concat.weight[:, 40:80], 0, 1)) +
+               uni_fuse.output_concat.bias / 3)
+    preds_a = (torch.mm(x_a, torch.transpose(uni_fuse.output_concat.weight[:, 80:], 0, 1)) +
+               uni_fuse.output_concat.bias / 3)
+
+    # print(preds_t)
+    # input(f'preds_t')
+
+    _x = 1
+    if _x == 1:
+        # TODO: estimate uni-model results
+        loss_t = _loss_fct(preds_t.view(-1), _label_ids.view(-1))
+        loss_v = _loss_fct(preds_v.view(-1), _label_ids.view(-1))
+        loss_a = _loss_fct(preds_a.view(-1), _label_ids.view(-1))
+
+        # -----------------------------------------
+        # TODO: pa_gate_loss
+        pa_gate = _model.bert.MAG.g_mean
+        pa_loss = torch.pow(pa_gate[0] * loss_t + pa_gate[1] * loss_v + pa_gate[1] * loss_a, 1 / _model.bert.MAG.n_mods)
+        # -----------------------------------------
+
+    return _x, pa_loss
+
+
 def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, scheduler):
     model.train()
     tr_loss = 0
@@ -364,7 +397,7 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
         input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
         visual = torch.squeeze(visual, 1)
         acoustic = torch.squeeze(acoustic, 1)
-        outputs = model(
+        outputs, x_tri_mods = model(
             input_ids,
             visual,
             acoustic,
@@ -376,12 +409,16 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
         loss_fct = MSELoss()
         loss = loss_fct(logits.view(-1), label_ids.view(-1))
 
-        # TODO: gate loss
-
         if args.gradient_accumulation_step > 1:
             loss = loss / args.gradient_accumulation_step
 
-        loss.backward()
+        _x, pa_loss = PA_func(x_tri_mods, model, loss_fct, label_ids)
+        if _x == 1:
+            loss += pa_loss  # 添加 pa_loss.
+            # print(pa_prob, pa_loss)
+
+        loss.backward()  # retain_graph=True
+        # pa_loss.backward()
 
         tr_loss += loss.item()
         nb_tr_steps += 1
@@ -405,7 +442,7 @@ def eval_epoch(model: nn.Module, dev_dataloader: DataLoader, optimizer):
             input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
             visual = torch.squeeze(visual, 1)
             acoustic = torch.squeeze(acoustic, 1)
-            outputs = model(
+            outputs, x_tri_mods = model(
                 input_ids,
                 visual,
                 acoustic,
@@ -417,6 +454,12 @@ def eval_epoch(model: nn.Module, dev_dataloader: DataLoader, optimizer):
 
             loss_fct = MSELoss()
             loss = loss_fct(logits.view(-1), label_ids.view(-1))
+
+            # PA...
+            _x, pa_loss = PA_func(x_tri_mods, model, loss_fct, label_ids)
+            if _x == 1:
+                loss += pa_loss  # 添加 pa_loss.
+                # print(pa_prob, pa_loss)
 
             if args.gradient_accumulation_step > 1:
                 loss = loss / args.gradient_accumulation_step
@@ -439,7 +482,7 @@ def test_epoch(model: nn.Module, test_dataloader: DataLoader):
             input_ids, visual, acoustic, input_mask, segment_ids, label_ids = batch
             visual = torch.squeeze(visual, 1)
             acoustic = torch.squeeze(acoustic, 1)
-            outputs = model(
+            outputs, x_tri_mods = model(
                 input_ids,
                 visual,
                 acoustic,
@@ -466,19 +509,28 @@ def test_epoch(model: nn.Module, test_dataloader: DataLoader):
 
 
 def test_score_model(model: nn.Module, test_dataloader: DataLoader, use_zero=False):
-
     preds, y_test = test_epoch(model, test_dataloader)
     non_zeros = np.array(
         [i for i, e in enumerate(y_test) if e != 0 or use_zero])
 
-    preds = preds[non_zeros]
-    y_test = y_test[non_zeros]
+    _method = 'right'  # left | right
+    # MFN 方式: 得到结果, 然后直接判断 [>= 0]的结果.
+    # MulT 方式: 得到结果, 取non-zero, 然后 [>0] .
+    if _method == 'left':
+        mae = np.mean(np.absolute(preds - y_test))
+        corr = np.corrcoef(preds, y_test)[0][1]
 
-    mae = np.mean(np.absolute(preds - y_test))
-    corr = np.corrcoef(preds, y_test)[0][1]
+        preds = preds >= 0  # MulT: >0, 无=0;
+        y_test = y_test >= 0
+    else:
+        preds = preds[non_zeros]
+        y_test = y_test[non_zeros]
 
-    preds = preds >= 0
-    y_test = y_test >= 0
+        mae = np.mean(np.absolute(preds - y_test))
+        corr = np.corrcoef(preds, y_test)[0][1]
+
+        preds = preds > 0  # MulT: >0, 无=0;
+        y_test = y_test > 0
 
     f_score = f1_score(y_test, preds, average="weighted")
     acc = accuracy_score(y_test, preds)
@@ -487,12 +539,12 @@ def test_score_model(model: nn.Module, test_dataloader: DataLoader, use_zero=Fal
 
 
 def train(
-    model,
-    train_dataloader,
-    validation_dataloader,
-    test_data_loader,
-    optimizer,
-    scheduler,
+        model,
+        train_dataloader,
+        validation_dataloader,
+        test_data_loader,
+        optimizer,
+        scheduler,
 ):
     valid_losses = []
     test_accuracies = []
@@ -513,12 +565,14 @@ def train(
         valid_losses.append(valid_loss)
         test_accuracies.append(test_acc)
 
+        print(f'best-test: {max(test_accuracies)}; test_mae: {test_mae}; test_corr: {test_corr}')
+
         if args.wandb:
             wandb.log(
                 (
                     {
                         "train_loss": train_loss,
-                        "valid_loss": valid_loss,
+                        # "valid_loss": valid_loss,
                         "test_acc": test_acc,
                         "test_mae": test_mae,
                         "test_corr": test_corr,
