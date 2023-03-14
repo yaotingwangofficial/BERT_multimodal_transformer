@@ -30,9 +30,10 @@ class MAG(nn.Module):
 
         # self.proj_v = nn.Linear(self.dim_v, self.dim_t)
         # self.proj_a = nn.Linear(self.dim_a, self.dim_t)
-        self.proj_t = nn.Conv1d(self.dim_t, self.dim_tmp, kernel_size=self.kernels[1], padding=0, bias=False)
-        self.proj_v = nn.Conv1d(self.dim_v, self.dim_tmp, kernel_size=self.kernels[1], padding=0, bias=False)
-        self.proj_a = nn.Conv1d(self.dim_a, self.dim_tmp, kernel_size=self.kernels[2], padding=0, bias=False)
+        _bias = True
+        self.proj_t = nn.Conv1d(self.dim_t, self.dim_tmp, kernel_size=self.kernels[1], padding=0, bias=_bias)
+        self.proj_v = nn.Conv1d(self.dim_v, self.dim_tmp, kernel_size=self.kernels[1], padding=0, bias=_bias)
+        self.proj_a = nn.Conv1d(self.dim_a, self.dim_tmp, kernel_size=self.kernels[2], padding=0, bias=_bias)
         self.dim_out = 1
         self.output_concat = nn.Linear(self.dim_tmp*3, self.dim_out)
 
@@ -54,7 +55,7 @@ class MAG(nn.Module):
         # self.net_prim = self.get_network('mem_prim')
         self.attn_dropout = 0.1
         self.layers = 5
-        self.heads = 10
+        self.heads = 2
         self.embed_dropout = 0.1
         self.attn_mask = None
         self.net_prim_with_aux1 = self.get_network('p_a1')

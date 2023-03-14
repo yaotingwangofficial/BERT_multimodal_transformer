@@ -38,7 +38,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--dataset", type=str,
                     choices=["mosi", "mosei"], default="mosi")
 parser.add_argument("--max_seq_length", type=int, default=50)
-parser.add_argument("--train_batch_size", type=int, default=32)
+parser.add_argument("--train_batch_size", type=int, default=64)
 parser.add_argument("--dev_batch_size", type=int, default=128)
 parser.add_argument("--test_batch_size", type=int, default=128)
 parser.add_argument("--n_epochs", type=int, default=40)
@@ -411,11 +411,11 @@ def train_epoch(model: nn.Module, train_dataloader: DataLoader, optimizer, sched
         if args.gradient_accumulation_step > 1:
             loss = loss / args.gradient_accumulation_step
 
-        if _x == 0:
+        if _x == 1:
             loss += pa_loss  # 添加 pa_loss.
             # print(pa_prob, pa_loss)
-        loss.backward(retain_graph=True)
-        pa_loss.backward()
+        loss.backward()  # retain_graph=True
+        # pa_loss.backward()
 
         tr_loss += loss.item()
         nb_tr_steps += 1
